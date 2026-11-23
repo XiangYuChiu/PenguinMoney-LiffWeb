@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f5f7fa">
+  <title>PenguinMoney - 支出明細</title>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root {
+      --primary: #16a34a;
+      --text: #1f2937;
+      --muted: #64748b;
+      --danger: #dc2626;
+      --surface: #ffffff;
+      --background: #f5f7fa;
+      --border: #e2e8f0;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 20px 16px 32px;
+      background: var(--background);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+    }
+
+    .container { max-width: 600px; margin: 0 auto; }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .logo {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: #dcfce7;
+      font-size: 26px;
+      flex-shrink: 0;
+    }
+
+    h1 { margin: 0; font-size: 21px; }
+    .subtitle { margin-top: 5px; color: var(--muted); font-size: 13px; }
+
+    .card {
+      background: var(--surface);
+      border-radius: 18px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 3px 12px #0f172a08;
+    }
+
+    .label { color: var(--muted); font-size: 13px; }
+
+    .month {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .month-title { font-size: 17px; font-weight: 700; }
+
+    .total {
+      font-size: 34px;
+      font-weight: 750;
+      color: var(--danger);
+      margin: 10px 0;
+      overflow-wrap: anywhere;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .stat { background: #f8fafc; padding: 14px; border-radius: 12px; min-width: 0; }
+    .stat-value { font-size: 19px; font-weight: 700; margin-top: 8px; overflow-wrap: anywhere; }
+    .section-title { font-size: 17px; font-weight: 700; margin: 0 0 16px; }
+
+    .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+    .field { min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 13px; }
+
+    input, select {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: #fff;
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+
+    input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px #16a34a18; }
+
+    .results-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 6px 0 4px;
+    }
+
+    .result-count { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+    .record {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 0;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .record:last-child { border-bottom: none; padding-bottom: 0; }
+
+    .record-icon {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      background: #f1f5f9;
+      border-radius: 13px;
+      font-size: 21px;
+      flex-shrink: 0;
+    }
+
+    .record-info { flex: 1; min-width: 0; }
+    .record-name { font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+    .record-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .amount { color: var(--danger); font-weight: 700; font-size: 15px; white-space: nowrap; }
+
+    .notice { text-align: center; color: var(--muted); font-size: 13px; padding: 20px 8px; }
+    .status { margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: #eff6ff; color: #1d4ed8; font-size: 13px; line-height: 1.5; }
+    .status.error { background: #fef2f2; color: #b91c1c; }
+    .status[hidden] { display: none; }
+    .loading { opacity: .65; pointer-events: none; }
+
+    @media (max-width: 380px) {
+      body { padding: 16px 12px 28px; }
+      .card { padding: 16px; }
+      .total { font-size: 29px; }
+      .stats { gap: 8px; }
+      .stat { padding: 12px; }
+      .stat-value { font-size: 17px; }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="container">
+    <header class="header">
+      <div class="logo">🐧</div>
+      <div>
+        <h1>PenguinMoney</h1>
+        <div class="subtitle">支出明細 Expense Details</div>
+      </div>
+    </header>
+
+    <div id="status" class="status" role="status">正在連線並驗證 LINE 身分…</div>
+
+    <section class="card">
+      <div class="month">
+        <div>
+          <div class="label">支出統計</div>
+          <div class="month-title" id="monthTitle">載入中…</div>
+        </div>
+      </div>
+
+      <div class="label">本月總支出</div>
+      <div class="total" id="totalAmount">—</div>
+      <div class="label" id="recordCount">正在取得紀錄…</div>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="label">平均每日支出</div>
+          <div class="stat-value" id="averageAmount">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">最高單筆支出</div>
+          <div class="stat-value" id="maxAmount">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">搜尋支出</h2>
+
+      <div class="filters">
+        <div class="field full">
+          <label for="monthInput">查詢月份</label>
+          <input id="monthInput" type="month">
+        </div>
+        <div class="field full">
+          <label for="keywordInput">關鍵字</label>
+          <input id="keywordInput" type="search" placeholder="搜尋店家名稱或帳戶">
+        </div>
+        <div class="field">
+          <label for="categoryFilter">支出類別</label>
+          <select id="categoryFilter">
+            <option value="">全部類別</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dateFilter">日期</label>
+          <select id="dateFilter">
+            <option value="">全部日期</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="results-heading">
+        <div class="section-title" style="margin:0">支出紀錄</div>
+        <div id="filteredCount" class="result-count">0 筆</div>
+      </div>
+      <div id="expenseList"></div>
+      <div id="emptyState" class="notice" hidden>沒有符合條件的支出紀錄</div>
+    </section>
+  </main>
+
+  <script>
+    // 請填入 LINE Developers 後台的 LIFF ID。
+    const LIFF_ID = "2012018149-FSmvALEp";
+
+    let idToken = null;
+    let allRecords = [];
+    let currentData = null;
+
+    const $ = id => document.getElementById(id);
+    const money = value => "$" + Number(value || 0).toLocaleString("zh-TW", {
+      maximumFractionDigits: 2
+    });
+
+    function showStatus(message, isError = false) {
+      const el = $("status");
+      el.textContent = message;
+      el.classList.toggle("error", isError);
+      el.hidden = !message;
+    }
+
+    function getCurrentMonthValue() {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    }
+
+    function parseMonth(value) {
+      const match = /^(\d{4})-(\d{2})$/.exec(value || "");
+      if (!match) throw new Error("請選擇正確的查詢月份。");
+      return { year: Number(match[1]), month: Number(match[2]) };
+    }
+
+    // GAS Web App 網址（部署後的 /exec）
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwk3XwI9Dbz8rAN6PHbVt8t7h57y8jpOfvujOSM1mK-NGNILSUiNjSQu66zAgs7au1jbw/exec";
+
+    async function callMonthApi(year, month) {
+      console.log("[LIFF][API] 準備呼叫 GAS", { year, month, hasIdToken: Boolean(idToken) });
+
+      // 用 text/plain 送出，避免瀏覽器對 GAS 發出 CORS preflight（GAS 不支援 OPTIONS）
+      const response = await fetch(GAS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "liff_month", idToken: idToken, year: year, month: month }),
+        redirect: "follow"
+      });
+
+      if (!response.ok)
+        throw new Error("讀取支出資料失敗（HTTP " + response.status + "）。");
+
+      const result = await response.json();
+
+      if (!result || result.success !== true)
+        throw new Error((result && result.error) || "讀取支出資料失敗。");
+
+      console.log("[LIFF][API] GAS 回傳成功", { recordCount: result.data && result.data.recordCount });
+      return result.data;
+    }
+
+    async function loadMonth() {
+      console.log("[LIFF][DATA] 開始載入月份", $("monthInput").value);
+      const selected = parseMonth($("monthInput").value);
+      document.body.classList.add("loading");
+      showStatus("正在讀取這個月的支出紀錄…");
+
+      try {
+        const result = await callMonthApi(selected.year, selected.month);
+        console.log("[LIFF][DATA] 收到月份資料", result);
+        currentData = result;
+        allRecords = Array.isArray(result.records) ? result.records : [];
+        renderStats();
+        rebuildFilters();
+        renderRecords();
+        showStatus("");
+      } catch (error) {
+        console.error("[LIFF][DATA] 載入月份失敗", error);
+        showStatus(error.message || "讀取失敗，請稍後再試。", true);
+        $("expenseList").replaceChildren();
+        $("emptyState").hidden = false;
+        $("emptyState").textContent = "目前無法載入支出紀錄。";
+        $("filteredCount").textContent = "—";
+      } finally {
+        document.body.classList.remove("loading");
+      }
+    }
+
+    function renderStats() {
+      const { year, month } = currentData;
+      const monthLabel = `${year} 年 ${month} 月`;
+      $("monthTitle").textContent = monthLabel;
+      $("totalAmount").textContent = money(currentData.total);
+      $("recordCount").textContent = `共 ${allRecords.length} 筆紀錄`;
+
+      const total = allRecords.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+      const max = allRecords.reduce((highest, item) => Math.max(highest, Number(item.amount || 0)), 0);
+
+      // 本月以今天為分母；查詢過去月份則以整月天數為分母。
+      const now = new Date();
+      const isCurrentMonth = now.getFullYear() === year && now.getMonth() + 1 === month;
+      const days = isCurrentMonth ? now.getDate() : new Date(year, month, 0).getDate();
+      $("averageAmount").textContent = money(days > 0 ? total / days : 0);
+      $("maxAmount").textContent = money(max);
+    }
+
+    function rebuildFilters() {
+      const categorySelect = $("categoryFilter");
+      const dateSelect = $("dateFilter");
+      const previousCategory = categorySelect.value;
+      const previousDate = dateSelect.value;
+
+      categorySelect.replaceChildren(new Option("全部類別", ""));
+      dateSelect.replaceChildren(new Option("全部日期", ""));
+
+      const categories = [...new Set(allRecords.map(r => String(r.category || "").trim()).filter(Boolean))].sort();
+      categories.forEach(category => categorySelect.add(new Option(category, category)));
+
+      const dates = [...new Set(allRecords.map(r => String(r.date || "").trim()).filter(Boolean))].sort().reverse();
+      dates.forEach(date => {
+        const label = date.includes("/") ? date.slice(5).replace("/", "/") : date;
+        dateSelect.add(new Option(label, date));
+      });
+
+      if ([...categorySelect.options].some(o => o.value === previousCategory)) categorySelect.value = previousCategory;
+      if ([...dateSelect.options].some(o => o.value === previousDate)) dateSelect.value = previousDate;
+    }
+
+    function iconForCategory(category) {
+      const value = String(category || "");
+      if (value.includes("伙食") || value.includes("餐")) return "🍱";
+      if (value.includes("交通") || value.includes("車")) return "🚌";
+      if (value.includes("娛樂") || value.includes("運動")) return "🎾";
+      if (value.includes("投資") || value.includes("學習")) return "📚";
+      if (value.includes("雜費") || value.includes("生活")) return "🛍️";
+      return "🧾";
+    }
+
+    function renderRecords() {
+      const keyword = $("keywordInput").value.trim().toLocaleLowerCase();
+      const category = $("categoryFilter").value;
+      const date = $("dateFilter").value;
+
+      const filtered = allRecords.filter(item => {
+        const searchable = [
+          item.name, item.category, item.account
+        ].map(value => String(value || "").toLocaleLowerCase()).join(" ");
+        return (!keyword || searchable.includes(keyword)) &&
+          (!category || item.category === category) &&
+          (!date || item.date === date);
+      });
+
+      const list = $("expenseList");
+      list.replaceChildren();
+      $("filteredCount").textContent = `${filtered.length} 筆`;
+      $("emptyState").hidden = filtered.length !== 0;
+
+      filtered.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "record";
+
+        const icon = document.createElement("div");
+        icon.className = "record-icon";
+        icon.textContent = iconForCategory(item.category);
+
+        const info = document.createElement("div");
+        info.className = "record-info";
+
+        const name = document.createElement("div");
+        name.className = "record-name";
+        name.textContent = item.name || "未命名支出";
+
+        const meta = document.createElement("div");
+        meta.className = "record-meta";
+        meta.textContent = [
+          item.date || "日期未知",
+          item.category || "未分類",
+          item.account || ""
+        ].filter(Boolean).join(" · ");
+
+        const amount = document.createElement("div");
+        amount.className = "amount";
+        amount.textContent = "-" + money(item.amount);
+
+        info.append(name, meta);
+        row.append(icon, info, amount);
+        list.appendChild(row);
+      });
+    }
+
+
+    async function initialize() {
+      console.log("[LIFF] initialize() 開始");
+      $("monthInput").value = getCurrentMonthValue();
+
+      try {
+        console.log("[LIFF] SDK 狀態", {
+          sdkLoaded: Boolean(window.liff),
+          liffId: LIFF_ID,
+          pageUrl: window.location.href
+        });
+
+        if (!window.liff) {
+          throw new Error("LIFF SDK 載入失敗。");
+        }
+
+        console.log("[LIFF] 開始呼叫 liff.init()");
+        await liff.init({ liffId: LIFF_ID });
+
+        console.log("[LIFF] liff.init() 完成", {
+          isInClient: liff.isInClient(),
+          isLoggedIn: liff.isLoggedIn(),
+          idTokenExists: Boolean(liff.getIDToken())
+        });
+
+        // 外部瀏覽器尚未登入時，導向 LINE Login。
+        if (!liff.isLoggedIn()) {
+          console.warn("[LIFF] 使用者尚未登入，準備導向 LINE Login");
+          showStatus("正在前往 LINE 登入…");
+          liff.login();
+          return;
+        }
+
+        idToken = liff.getIDToken();
+
+        console.log("[LIFF] ID Token exists:", Boolean(idToken));
+
+        if (!idToken) {
+          throw new Error(
+            "使用者已登入，但仍無法取得 ID Token。請確認 openid 授權狀態。"
+          );
+        }
+
+        $("monthInput").addEventListener("change", () => {
+          if ($("monthInput").value) loadMonth();
+        });
+
+        $("keywordInput").addEventListener("input", renderRecords);
+        $("categoryFilter").addEventListener("change", renderRecords);
+        $("dateFilter").addEventListener("change", renderRecords);
+
+        console.log("[LIFF] 初始化完成，開始讀取支出");
+        await loadMonth();
+
+      } catch (error) {
+        console.error("[LIFF] 初始化失敗", error);
+        showStatus(error.message || "LIFF 初始化失敗。", true);
+      }
+    }
+
+
+    initialize();
+  </script>
+</body>
+</html>
