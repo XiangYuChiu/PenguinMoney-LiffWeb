@@ -109,6 +109,24 @@
       outline: none;
     }
 
+    /* iOS / LINE 內建瀏覽器的 month、date 輸入框有原生最小寬度，會超出外框 */
+    input[type="month"],
+    input[type="date"] {
+      -webkit-appearance: none;
+      appearance: none;
+      display: block;
+      min-width: 0;
+      max-width: 100%;
+      line-height: 1.2;
+      text-align: left;
+    }
+
+    input[type="month"]::-webkit-date-and-time-value,
+    input[type="date"]::-webkit-date-and-time-value {
+      text-align: left;
+      min-width: 0;
+    }
+
     input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px #16a34a18; }
 
     .results-heading {
