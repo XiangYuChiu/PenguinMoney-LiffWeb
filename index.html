@@ -207,6 +207,8 @@
     }
     .amount { color: var(--danger); font-weight: 750; font-size: 15px; white-space: nowrap; }
 
+    .foot { text-align: center; font-size: 11px; color: var(--muted); opacity: .75; padding: 4px 0 10px; line-height: 1.6; word-break: break-all; }
+
     /* ---------- 狀態 ---------- */
     .notice { text-align: center; color: var(--muted); font-size: 13px; padding: 28px 8px; }
     .notice .emoji { font-size: 34px; display: block; margin-bottom: 8px; }
@@ -326,6 +328,7 @@
         <div id="expenseList"></div>
         <div id="emptyState" class="notice" hidden><span class="emoji">🧾</span>沒有符合條件的支出紀錄</div>
       </section>
+      <div class="foot" id="foot"></div>
     </main>
   </div>
 
@@ -339,6 +342,9 @@
 
     const PALETTE = ["#00a859", "#1e88e5", "#f9a825", "#8e24aa", "#00acc1", "#6d4c41", "#e53935", "#546e7a"];
     const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+
+    // 網頁版本：頁尾會顯示，用來確認 LINE 載入的是不是最新頁面
+    const PAGE_VERSION = "2026-11-23.4";
 
     let idToken = null;
     let allRecords = [];
@@ -440,6 +446,7 @@
         currentData = result;
         allRecords = Array.isArray(result.records) ? result.records : [];
         renderHero();
+        renderFoot();
         computeCategoryColors(spentByCategory());
         renderBudget();
         renderBreakdown();
@@ -504,6 +511,21 @@
 
       categoryColors = {};
       names.forEach((name, index) => { categoryColors[name] = PALETTE[index % PALETTE.length]; });
+    }
+
+    // 頁尾：版本與預算資料狀態；網址加上 ?debug=1 會多顯示後端回傳的預算內容
+    function renderFoot() {
+      const budget = currentData && currentData.budget;
+      let text = `網頁版本 ${PAGE_VERSION}｜預算資料：`;
+
+      if (budget === undefined) text += "後端未回傳（後端版本過舊？）";
+      else if (budget === null) text += "本月查無預算";
+      else text += `有（總預算 ${budget.total}）`;
+
+      if (new URLSearchParams(location.search).has("debug") || /[?&]debug/.test(location.hash))
+        text += "\n" + JSON.stringify(budget);
+
+      $("foot").textContent = text;
     }
 
     // ---------- 預算使用額度 ----------
