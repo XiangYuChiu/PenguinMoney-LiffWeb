@@ -21,6 +21,7 @@
       --background: #f1f5f3;
       --border: #e5ebe8;
       --shadow: 0 4px 18px rgba(15, 110, 75, .08);
+      --rest: #d5ddd9;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -34,6 +35,7 @@
         --border: #2b3732;
         --brand-soft: #1d3228;
         --shadow: 0 4px 18px rgba(0, 0, 0, .35);
+        --rest: #35433d;
       }
     }
 
@@ -135,6 +137,25 @@
     .legend-name { flex: 1; font-size: 14px; font-weight: 650; min-width: 0; overflow-wrap: anywhere; }
     .legend-pct { font-size: 12px; color: var(--muted); min-width: 44px; text-align: right; }
     .legend-amt { font-size: 14px; font-weight: 700; min-width: 72px; text-align: right; }
+
+    /* ---------- 預算使用額度 ---------- */
+    .bud-big { font-size: 26px; font-weight: 800; letter-spacing: .3px; overflow-wrap: anywhere; }
+    .bud-of { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 6px; }
+    .bud-remain { font-size: 13px; font-weight: 650; color: var(--brand-2); margin: 4px 0 12px; }
+    .bud-remain.over { color: var(--danger); }
+    .bar.over { box-shadow: 0 0 0 2px var(--danger); }
+    .bar-seg.rest { background: var(--rest); }
+    .bud-list { margin-top: 14px; }
+    .bud-row { padding: 9px 0; }
+    .bud-top { display: flex; align-items: center; gap: 10px; }
+    .bud-name { flex: 1; font-size: 14px; font-weight: 650; min-width: 0; overflow-wrap: anywhere; }
+    .bud-amt { font-size: 13px; color: var(--muted); white-space: nowrap; }
+    .bud-amt b { color: var(--text); font-weight: 750; }
+    .bud-amt.over b { color: var(--danger); }
+    .mini { height: 6px; border-radius: 3px; background: var(--surface-2); margin: 8px 0 0 20px; overflow: hidden; }
+    .mini-fill { height: 100%; border-radius: 3px; }
+    .bud-pct { font-size: 12px; color: var(--muted); min-width: 40px; text-align: right; }
+    .bud-pct.over { color: var(--danger); font-weight: 700; }
 
     /* ---------- 篩選 ---------- */
     .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 6px; }
@@ -256,6 +277,17 @@
             <div class="stat-value" id="maxAmount">—</div>
           </div>
         </div>
+      </section>
+
+      <section class="card" id="budgetCard" hidden>
+        <div class="section-head">
+          <h2 class="section-title">預算使用額度</h2>
+          <span class="section-note" id="budgetPct">—</span>
+        </div>
+        <div class="bud-big"><span id="budgetUsed">—</span><span class="bud-of" id="budgetOf"></span></div>
+        <div class="bud-remain" id="budgetRemain"></div>
+        <div class="bar" id="budgetBar"></div>
+        <div class="bud-list" id="budgetList"></div>
       </section>
 
       <section class="card" id="breakdownCard" hidden>
@@ -408,6 +440,8 @@
         currentData = result;
         allRecords = Array.isArray(result.records) ? result.records : [];
         renderHero();
+        computeCategoryColors(spentByCategory());
+        renderBudget();
         renderBreakdown();
         rebuildFilters();
         renderRecords();
@@ -419,6 +453,7 @@
         showStatus(error.message || "讀取失敗，請稍後再試。", true, loadMonth);
         allRecords = [];
         $("breakdownCard").hidden = true;
+        $("budgetCard").hidden = true;
         $("emptyState").hidden = false;
         $("emptyState").lastChild.textContent = "目前無法載入支出紀錄。";
         $("filteredCount").textContent = "—";
@@ -449,18 +484,119 @@
     // ---------- 分類比例 ----------
     let categoryColors = {};
 
-    function renderBreakdown() {
+    // 各分類本月實際花費
+    function spentByCategory() {
       const totals = {};
       allRecords.forEach(item => {
         const name = String(item.category || "").trim() || "未分類";
         totals[name] = (totals[name] || 0) + Number(item.amount || 0);
       });
+      return totals;
+    }
 
-      const list = Object.entries(totals).sort((a, b) => b[1] - a[1]);
-      const sum = list.reduce((s, [, amount]) => s + amount, 0);
+    // 「預算使用額度」與「支出分類」共用同一套分類顏色
+    function computeCategoryColors(totals) {
+      const names = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+      const budget = currentData && currentData.budget;
+
+      if (budget && budget.categories)
+        Object.keys(budget.categories).forEach(name => { if (!names.includes(name)) names.push(name); });
 
       categoryColors = {};
-      list.forEach(([name], index) => { categoryColors[name] = PALETTE[index % PALETTE.length]; });
+      names.forEach((name, index) => { categoryColors[name] = PALETTE[index % PALETTE.length]; });
+    }
+
+    // ---------- 預算使用額度 ----------
+    // 整條 = 本月預算（超支時以實際花費為 100%），各分類依實際花費切段，剩餘為灰色
+    function renderBudget() {
+      const card = $("budgetCard");
+      const budget = currentData && currentData.budget;
+      const budgetTotal = budget ? Number(budget.total) || 0 : 0;
+
+      if (!budget || budgetTotal <= 0) {
+        card.hidden = true;
+        return;
+      }
+
+      const totals = spentByCategory();
+      const spent = Object.values(totals).reduce((sum, value) => sum + value, 0);
+      const remaining = budgetTotal - spent;
+      const isOver = remaining < 0;
+      const base = Math.max(budgetTotal, spent);
+
+      card.hidden = false;
+      $("budgetUsed").textContent = money(spent);
+      $("budgetOf").textContent = `/ 預算 ${money(budgetTotal)}`;
+      $("budgetPct").textContent = `已使用 ${(spent / budgetTotal * 100).toFixed(1)}%`;
+
+      const remain = $("budgetRemain");
+      remain.textContent = isOver ? `已超支 ${money(-remaining)}` : `尚可使用 ${money(remaining)}`;
+      remain.classList.toggle("over", isOver);
+
+      // 橫條
+      const bar = $("budgetBar");
+      bar.replaceChildren();
+      bar.classList.toggle("over", isOver);
+
+      Object.entries(totals).filter(([, amount]) => amount > 0).sort((a, b) => b[1] - a[1]).forEach(([name, amount]) => {
+        const seg = el("div", "bar-seg");
+        seg.style.flex = `${amount / base * 100} 1 0`;
+        seg.style.background = categoryColors[name] || "#9aa8a1";
+        seg.title = `${name} ${money(amount)}`;
+        bar.append(seg);
+      });
+
+      if (remaining > 0) {
+        const rest = el("div", "bar-seg rest");
+        rest.style.flex = `${remaining / base * 100} 1 0`;
+        rest.title = `尚可使用 ${money(remaining)}`;
+        bar.append(rest);
+      }
+
+      // 各分類：已用 / 預算
+      const list = $("budgetList");
+      list.replaceChildren();
+
+      const names = new Set([...Object.keys(budget.categories || {}), ...Object.keys(totals)]);
+      [...names].sort((a, b) => (totals[b] || 0) - (totals[a] || 0)).forEach(name => {
+        const used = totals[name] || 0;
+        const limit = budget.categories ? Number(budget.categories[name]) : NaN;
+        const hasLimit = Number.isFinite(limit) && limit > 0;
+        const over = hasLimit && used > limit;
+        const color = categoryColors[name] || "#9aa8a1";
+
+        const row = el("div", "bud-row");
+        const top = el("div", "bud-top");
+        const dot = el("span", "dot");
+        dot.style.background = color;
+
+        const amt = el("span", "bud-amt" + (over ? " over" : ""));
+        const usedEl = document.createElement("b");
+        usedEl.textContent = money(used);
+        amt.append(usedEl, document.createTextNode(hasLimit ? ` / ${money(limit)}` : "（未設預算）"));
+
+        top.append(dot, el("span", "bud-name", name), amt);
+        row.append(top);
+
+        if (hasLimit) {
+          const pct = used / limit * 100;
+          const mini = el("div", "mini");
+          const fill = el("div", "mini-fill");
+          fill.style.width = Math.min(pct, 100) + "%";
+          fill.style.background = over ? "var(--danger)" : color;
+          mini.append(fill);
+          row.append(mini);
+          top.append(el("span", "bud-pct" + (over ? " over" : ""), pct.toFixed(0) + "%"));
+        }
+
+        list.append(row);
+      });
+    }
+
+    function renderBreakdown() {
+      const totals = spentByCategory();
+      const list = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+      const sum = list.reduce((s, [, amount]) => s + amount, 0);
 
       $("breakdownCard").hidden = list.length === 0 || sum <= 0;
       if (list.length === 0 || sum <= 0) return;
