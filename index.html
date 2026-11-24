@@ -340,11 +340,11 @@
     // 網頁只傳送 LINE ID Token、年、月；使用者身分與 Firestore 路徑都由 GAS 端驗證後決定。
     const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwk3XwI9Dbz8rAN6PHbVt8t7h57y8jpOfvujOSM1mK-NGNILSUiNjSQu66zAgs7au1jbw/exec";
 
-    const PALETTE = ["#00a859", "#1e88e5", "#f9a825", "#8e24aa", "#00acc1", "#6d4c41", "#e53935", "#546e7a"];
+    const PALETTE = ["#00a859", "#1e88e5", "#f9a825", "#8e24aa", "#00acc1", "#6d4c41", "#e53935", "#546e7a", "#ef6c00", "#c2185b", "#7cb342", "#3949ab"];
     const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 
     // 網頁版本：頁尾會顯示，用來確認 LINE 載入的是不是最新頁面
-    const PAGE_VERSION = "2026-11-23.4";
+    const PAGE_VERSION = "2026-11-24.1";
 
     let idToken = null;
     let allRecords = [];
@@ -408,7 +408,44 @@
     }
 
     // ---------- API ----------
+    // ID Token 約 1 小時過期；頁面開著很久時要重新取得，否則後端驗證會失敗
+    function isIdTokenExpired() {
+      try {
+        const decoded = liff.getDecodedIDToken();
+        return !decoded || !decoded.exp || decoded.exp * 1000 < Date.now() + 60 * 1000;
+      } catch (error) {
+        return true;
+      }
+    }
+
+    let reauthing = false;
+    function reauthenticate() {
+      if (reauthing) return;
+
+      // 防止無限重新載入：30 秒內已經重登過一次就不再自動重登（例如手機時間不準）
+      let lastAt = 0;
+      try { lastAt = Number(sessionStorage.getItem("pm_reauth_at")) || 0; } catch (error) { /* 無法使用 sessionStorage */ }
+      if (Date.now() - lastAt < 30 * 1000) {
+        showStatus("LINE 身分驗證失敗，請關閉後重新開啟此頁面。", true);
+        return;
+      }
+      try { sessionStorage.setItem("pm_reauth_at", String(Date.now())); } catch (error) { /* 忽略 */ }
+
+      reauthing = true;
+      showStatus("登入已過期，正在重新登入…");
+      try { liff.logout(); } catch (error) { /* 忽略，直接重新載入 */ }
+      // 重新載入後 liff.init 會重新登入並取得新的 ID Token
+      location.reload();
+    }
+
     async function callMonthApi(year, month) {
+      idToken = liff.getIDToken();
+
+      if (!idToken || isIdTokenExpired()) {
+        reauthenticate();
+        throw new Error("登入已過期，正在重新登入…");
+      }
+
       // 用 text/plain 送出，避免瀏覽器對 GAS 發出 CORS preflight（GAS 不支援 OPTIONS）
       const response = await fetch(GAS_API_URL, {
         method: "POST",
@@ -422,8 +459,11 @@
 
       const result = await response.json();
 
-      if (!result || result.success !== true)
-        throw new Error((result && result.error) || "讀取支出資料失敗。");
+      if (!result || result.success !== true) {
+        const message = (result && result.error) || "讀取支出資料失敗。";
+        if (message.includes("身分驗證失敗")) reauthenticate();
+        throw new Error(message);
+      }
 
       return result.data;
     }
@@ -457,8 +497,20 @@
         if (seq !== requestSeq) return;
 
         console.error("[LIFF] 載入月份失敗", error);
+        if (reauthing) return;
         showStatus(error.message || "讀取失敗，請稍後再試。", true, loadMonth);
+
+        // 清掉上一個月的資料，避免標題是新月份、數字卻是舊月份
+        currentData = null;
         allRecords = [];
+        $("totalAmount").textContent = "—";
+        $("recordCount").textContent = "無法取得紀錄";
+        $("averageAmount").textContent = "—";
+        $("maxAmount").textContent = "—";
+        $("foot").textContent = `網頁版本 ${PAGE_VERSION}`;
+        rebuildFilters();
+        resetFilters();
+        $("clearFilters").hidden = true;
         $("breakdownCard").hidden = true;
         $("budgetCard").hidden = true;
         $("emptyState").hidden = false;
@@ -523,7 +575,7 @@
       else text += `有（總預算 ${budget.total}）`;
 
       if (new URLSearchParams(location.search).has("debug") || /[?&]debug/.test(location.hash))
-        text += "\n" + JSON.stringify(budget);
+        text += "\n" + JSON.stringify(budget === undefined ? null : budget);
 
       $("foot").textContent = text;
     }
@@ -544,7 +596,11 @@
       const spent = Object.values(totals).reduce((sum, value) => sum + value, 0);
       const remaining = budgetTotal - spent;
       const isOver = remaining < 0;
-      const base = Math.max(budgetTotal, spent);
+
+      // 橫條只畫正數分類（退款等負數不畫），剩餘也以橫條上的花費計算，整條才會剛好等於預算
+      const barSpent = Object.values(totals).reduce((sum, value) => sum + Math.max(value, 0), 0);
+      const barRemaining = budgetTotal - barSpent;
+      const base = Math.max(budgetTotal, barSpent);
 
       card.hidden = false;
       $("budgetUsed").textContent = money(spent);
@@ -558,7 +614,7 @@
       // 橫條
       const bar = $("budgetBar");
       bar.replaceChildren();
-      bar.classList.toggle("over", isOver);
+      bar.classList.toggle("over", barRemaining < 0);
 
       Object.entries(totals).filter(([, amount]) => amount > 0).sort((a, b) => b[1] - a[1]).forEach(([name, amount]) => {
         const seg = el("div", "bar-seg");
@@ -568,9 +624,9 @@
         bar.append(seg);
       });
 
-      if (remaining > 0) {
+      if (barRemaining > 0) {
         const rest = el("div", "bar-seg rest");
-        rest.style.flex = `${remaining / base * 100} 1 0`;
+        rest.style.flex = `${barRemaining / base * 100} 1 0`;
         rest.title = `尚可使用 ${money(remaining)}`;
         bar.append(rest);
       }
@@ -582,8 +638,10 @@
       const names = new Set([...Object.keys(budget.categories || {}), ...Object.keys(totals)]);
       [...names].sort((a, b) => (totals[b] || 0) - (totals[a] || 0)).forEach(name => {
         const used = totals[name] || 0;
-        const limit = budget.categories ? Number(budget.categories[name]) : NaN;
-        const hasLimit = Number.isFinite(limit) && limit > 0;
+        // 有設定（含 0）才算有預算；沒有這個分類的 key 才是「未設預算」
+        const categories = budget.categories || {};
+        const limit = Object.prototype.hasOwnProperty.call(categories, name) ? Number(categories[name]) : NaN;
+        const hasLimit = Number.isFinite(limit) && limit >= 0;
         const over = hasLimit && used > limit;
         const color = categoryColors[name] || "#9aa8a1";
 
@@ -601,7 +659,8 @@
         row.append(top);
 
         if (hasLimit) {
-          const pct = used / limit * 100;
+          // 預算 0：有花費就算 100% 超支，沒花費為 0%
+          const pct = limit > 0 ? used / limit * 100 : (used > 0 ? 100 : 0);
           const mini = el("div", "mini");
           const fill = el("div", "mini-fill");
           fill.style.width = Math.min(pct, 100) + "%";
@@ -662,7 +721,8 @@
       categorySelect.replaceChildren(new Option("全部類別", ""));
       dateSelect.replaceChildren(new Option("全部日期", ""));
 
-      const categories = [...new Set(allRecords.map(r => String(r.category || "").trim()).filter(Boolean))].sort();
+      // 空白類別與圖表一致歸為「未分類」，點圖例才篩得到
+      const categories = [...new Set(allRecords.map(r => String(r.category || "").trim() || "未分類"))].sort();
       categories.forEach(category => categorySelect.add(new Option(category, category)));
 
       const dates = [...new Set(allRecords.map(r => String(r.date || "").trim()).filter(Boolean))].sort().reverse();
@@ -786,6 +846,13 @@
         }
 
         idToken = liff.getIDToken();
+
+        if (idToken && isIdTokenExpired()) {
+          // 外部瀏覽器可能留著過期的登入狀態：登出後重新載入，會再導向 LINE 登入
+          reauthenticate();
+          if (reauthing) return;
+          throw new Error("LINE 身分驗證失敗，請關閉後重新開啟此頁面。");
+        }
 
         if (!idToken)
           throw new Error("使用者已登入，但仍無法取得 ID Token。請確認 openid 授權狀態。");
