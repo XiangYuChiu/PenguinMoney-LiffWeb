@@ -344,7 +344,7 @@
     const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 
     // 網頁版本：頁尾會顯示，用來確認 LINE 載入的是不是最新頁面
-    const PAGE_VERSION = "2026-11-24.1";
+    const PAGE_VERSION = "2026-11-24.2";
 
     let idToken = null;
     let allRecords = [];
@@ -461,7 +461,8 @@
 
       if (!result || result.success !== true) {
         const message = (result && result.error) || "讀取支出資料失敗。";
-        if (message.includes("身分驗證失敗")) reauthenticate();
+        // 依後端錯誤碼判斷（v2.23.2 起），不比對訊息文字
+        if (result && result.code === "AUTH_FAILED") reauthenticate();
         throw new Error(message);
       }
 
