@@ -344,7 +344,7 @@
     const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 
     // 網頁版本：頁尾會顯示，用來確認 LINE 載入的是不是最新頁面
-    const PAGE_VERSION = "2026-11-24.2";
+    const PAGE_VERSION = "2026-11-24.3";
 
     let idToken = null;
     let allRecords = [];
@@ -544,11 +544,22 @@
     // ---------- 分類比例 ----------
     let categoryColors = {};
 
+    // 空白類別一律歸為「未分類」（統計、篩選、顯示都用這個）
+    function normalizeCategory(value) {
+      return String(value || "").trim() || "未分類";
+    }
+
+    // 分類顏色；沒有分配到顏色的分類用中性灰
+    const FALLBACK_COLOR = "#9aa8a1";
+    function colorOf(name) {
+      return categoryColors[name] || FALLBACK_COLOR;
+    }
+
     // 各分類本月實際花費
     function spentByCategory() {
       const totals = {};
       allRecords.forEach(item => {
-        const name = String(item.category || "").trim() || "未分類";
+        const name = normalizeCategory(item.category);
         totals[name] = (totals[name] || 0) + Number(item.amount || 0);
       });
       return totals;
@@ -585,94 +596,113 @@
     // 整條 = 本月預算（超支時以實際花費為 100%），各分類依實際花費切段，剩餘為灰色
     function renderBudget() {
       const card = $("budgetCard");
-      const budget = currentData && currentData.budget;
+      const summary = computeBudgetSummary(currentData && currentData.budget, spentByCategory());
+
+      card.hidden = !summary;
+      if (!summary) return;
+
+      renderBudgetHeader(summary);
+      renderBudgetBar(summary);
+      $("budgetList").replaceChildren(...summary.rows.map(renderBudgetRow));
+    }
+
+    // 純計算：預算卡片需要的所有數字（不碰 DOM）；沒有預算時回傳 null
+    function computeBudgetSummary(budget, totals) {
       const budgetTotal = budget ? Number(budget.total) || 0 : 0;
+      if (!budget || budgetTotal <= 0) return null;
 
-      if (!budget || budgetTotal <= 0) {
-        card.hidden = true;
-        return;
-      }
-
-      const totals = spentByCategory();
       const spent = Object.values(totals).reduce((sum, value) => sum + value, 0);
       const remaining = budgetTotal - spent;
-      const isOver = remaining < 0;
 
       // 橫條只畫正數分類（退款等負數不畫），剩餘也以橫條上的花費計算，整條才會剛好等於預算
       const barSpent = Object.values(totals).reduce((sum, value) => sum + Math.max(value, 0), 0);
       const barRemaining = budgetTotal - barSpent;
       const base = Math.max(budgetTotal, barSpent);
 
-      card.hidden = false;
-      $("budgetUsed").textContent = money(spent);
-      $("budgetOf").textContent = `/ 預算 ${money(budgetTotal)}`;
-      $("budgetPct").textContent = `已使用 ${(spent / budgetTotal * 100).toFixed(1)}%`;
+      const segments = Object.entries(totals)
+        .filter(([, amount]) => amount > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, amount]) => ({ name, amount, percent: amount / base * 100 }));
+
+      // 各分類：已用 / 預算。有設定（含 0）才算有預算；沒有這個分類的 key 才是「未設預算」
+      const categories = budget.categories || {};
+      const names = [...new Set([...Object.keys(categories), ...Object.keys(totals)])];
+      const rows = names.sort((a, b) => (totals[b] || 0) - (totals[a] || 0)).map(name => {
+        const used = totals[name] || 0;
+        const limit = Object.prototype.hasOwnProperty.call(categories, name) ? Number(categories[name]) : NaN;
+        const hasLimit = Number.isFinite(limit) && limit >= 0;
+        // 預算 0：有花費就算 100% 超支，沒花費為 0%
+        const pct = !hasLimit ? null : limit > 0 ? used / limit * 100 : (used > 0 ? 100 : 0);
+        return { name, used, limit, hasLimit, over: hasLimit && used > limit, pct };
+      });
+
+      return {
+        budgetTotal, spent, remaining,
+        isOver: remaining < 0,
+        segments,
+        restPercent: barRemaining > 0 ? barRemaining / base * 100 : 0,
+        barOver: barRemaining < 0,
+        rows
+      };
+    }
+
+    function renderBudgetHeader(summary) {
+      $("budgetUsed").textContent = money(summary.spent);
+      $("budgetOf").textContent = `/ 預算 ${money(summary.budgetTotal)}`;
+      $("budgetPct").textContent = `已使用 ${(summary.spent / summary.budgetTotal * 100).toFixed(1)}%`;
 
       const remain = $("budgetRemain");
-      remain.textContent = isOver ? `已超支 ${money(-remaining)}` : `尚可使用 ${money(remaining)}`;
-      remain.classList.toggle("over", isOver);
+      remain.textContent = summary.isOver ? `已超支 ${money(-summary.remaining)}` : `尚可使用 ${money(summary.remaining)}`;
+      remain.classList.toggle("over", summary.isOver);
+    }
 
-      // 橫條
+    function renderBudgetBar(summary) {
       const bar = $("budgetBar");
       bar.replaceChildren();
-      bar.classList.toggle("over", barRemaining < 0);
+      bar.classList.toggle("over", summary.barOver);
 
-      Object.entries(totals).filter(([, amount]) => amount > 0).sort((a, b) => b[1] - a[1]).forEach(([name, amount]) => {
+      summary.segments.forEach(({ name, amount, percent }) => {
         const seg = el("div", "bar-seg");
-        seg.style.flex = `${amount / base * 100} 1 0`;
-        seg.style.background = categoryColors[name] || "#9aa8a1";
+        seg.style.flex = `${percent} 1 0`;
+        seg.style.background = colorOf(name);
         seg.title = `${name} ${money(amount)}`;
         bar.append(seg);
       });
 
-      if (barRemaining > 0) {
+      if (summary.restPercent > 0) {
         const rest = el("div", "bar-seg rest");
-        rest.style.flex = `${barRemaining / base * 100} 1 0`;
-        rest.title = `尚可使用 ${money(remaining)}`;
+        rest.style.flex = `${summary.restPercent} 1 0`;
+        rest.title = `尚可使用 ${money(summary.remaining)}`;
         bar.append(rest);
       }
+    }
 
-      // 各分類：已用 / 預算
-      const list = $("budgetList");
-      list.replaceChildren();
+    function renderBudgetRow({ name, used, limit, hasLimit, over, pct }) {
+      const color = colorOf(name);
+      const row = el("div", "bud-row");
+      const top = el("div", "bud-top");
+      const dot = el("span", "dot");
+      dot.style.background = color;
 
-      const names = new Set([...Object.keys(budget.categories || {}), ...Object.keys(totals)]);
-      [...names].sort((a, b) => (totals[b] || 0) - (totals[a] || 0)).forEach(name => {
-        const used = totals[name] || 0;
-        // 有設定（含 0）才算有預算；沒有這個分類的 key 才是「未設預算」
-        const categories = budget.categories || {};
-        const limit = Object.prototype.hasOwnProperty.call(categories, name) ? Number(categories[name]) : NaN;
-        const hasLimit = Number.isFinite(limit) && limit >= 0;
-        const over = hasLimit && used > limit;
-        const color = categoryColors[name] || "#9aa8a1";
+      const amt = el("span", "bud-amt" + (over ? " over" : ""));
+      const usedEl = document.createElement("b");
+      usedEl.textContent = money(used);
+      amt.append(usedEl, document.createTextNode(hasLimit ? ` / ${money(limit)}` : "（未設預算）"));
 
-        const row = el("div", "bud-row");
-        const top = el("div", "bud-top");
-        const dot = el("span", "dot");
-        dot.style.background = color;
+      top.append(dot, el("span", "bud-name", name), amt);
+      row.append(top);
 
-        const amt = el("span", "bud-amt" + (over ? " over" : ""));
-        const usedEl = document.createElement("b");
-        usedEl.textContent = money(used);
-        amt.append(usedEl, document.createTextNode(hasLimit ? ` / ${money(limit)}` : "（未設預算）"));
+      if (hasLimit) {
+        const mini = el("div", "mini");
+        const fill = el("div", "mini-fill");
+        fill.style.width = Math.min(pct, 100) + "%";
+        fill.style.background = over ? "var(--danger)" : color;
+        mini.append(fill);
+        row.append(mini);
+        top.append(el("span", "bud-pct" + (over ? " over" : ""), pct.toFixed(0) + "%"));
+      }
 
-        top.append(dot, el("span", "bud-name", name), amt);
-        row.append(top);
-
-        if (hasLimit) {
-          // 預算 0：有花費就算 100% 超支，沒花費為 0%
-          const pct = limit > 0 ? used / limit * 100 : (used > 0 ? 100 : 0);
-          const mini = el("div", "mini");
-          const fill = el("div", "mini-fill");
-          fill.style.width = Math.min(pct, 100) + "%";
-          fill.style.background = over ? "var(--danger)" : color;
-          mini.append(fill);
-          row.append(mini);
-          top.append(el("span", "bud-pct" + (over ? " over" : ""), pct.toFixed(0) + "%"));
-        }
-
-        list.append(row);
-      });
+      return row;
     }
 
     function renderBreakdown() {
@@ -723,7 +753,7 @@
       dateSelect.replaceChildren(new Option("全部日期", ""));
 
       // 空白類別與圖表一致歸為「未分類」，點圖例才篩得到
-      const categories = [...new Set(allRecords.map(r => String(r.category || "").trim() || "未分類"))].sort();
+      const categories = [...new Set(allRecords.map(r => normalizeCategory(r.category)))].sort();
       categories.forEach(category => categorySelect.add(new Option(category, category)));
 
       const dates = [...new Set(allRecords.map(r => String(r.date || "").trim()).filter(Boolean))].sort().reverse();
@@ -764,7 +794,7 @@
       const date = $("dateFilter").value;
 
       const filtered = allRecords.filter(item => {
-        const itemCategory = String(item.category || "").trim() || "未分類";
+        const itemCategory = normalizeCategory(item.category);
         const searchable = [item.name, item.category, item.account].map(v => String(v || "").toLocaleLowerCase()).join(" ");
 
         return (!keyword || searchable.includes(keyword)) &&
@@ -812,7 +842,7 @@
         info.append(el("div", "record-name", item.name || "未命名支出"));
 
         const meta = el("div", "record-meta");
-        meta.append(el("span", "tag", item.category || "未分類"));
+        meta.append(el("span", "tag", normalizeCategory(item.category)));
         if (item.account) meta.append(el("span", "tag", item.account));
         info.append(meta);
 
